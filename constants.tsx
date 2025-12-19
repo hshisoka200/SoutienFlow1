@@ -34,7 +34,7 @@ export const TRANSLATIONS: Translations = {
   all_subjects: { ar: 'جميع المواد', fr: 'Toutes les matières' },
   all_statuses: { ar: 'جميع الحالات', fr: 'Tous les statuts' },
   search: { ar: 'بحث...', fr: 'Recherche...' },
-  
+
   // Categories
   primary: { ar: 'الابتدائي', fr: 'Primaire' },
   middle: { ar: 'الإعدادي', fr: 'Collège' },
@@ -58,6 +58,17 @@ export const TRANSLATIONS: Translations = {
   '1BAC': { ar: 'أولى باك', fr: '1BAC' },
   '2BAC': { ar: 'ثانية باك', fr: '2BAC' },
 
+  // Subjects
+  'Maths': { ar: 'رياضيات', fr: 'Mathématiques' },
+  'Physics': { ar: 'فيزياء', fr: 'Physique' },
+  'PC': { ar: 'فيزياء وكيمياء', fr: 'Physique-Chimie' },
+  'SVT': { ar: 'علوم الحياة والأرض', fr: 'SVT' },
+  'Anglais': { ar: 'إنجليزية', fr: 'Anglais' },
+  'Français': { ar: 'فرنسية', fr: 'Français' },
+  'Arabe': { ar: 'عربية', fr: 'Arabe' },
+  'Philo': { ar: 'فلسفة', fr: 'Philosophie' },
+  'H-G': { ar: 'تاريخ وجغرافيا', fr: 'Histoire-Géo' },
+
   paid: { ar: 'مدفوع', fr: 'Payé' },
   unpaid: { ar: 'غير مدفوع', fr: 'Impayé' },
   pending: { ar: 'قيد الانتظار', fr: 'En attente' },
@@ -72,3 +83,4 @@ export const TRANSLATIONS: Translations = {
   status: { ar: 'الحالة', fr: 'Statut' },
   new_student: { ar: 'طالب جديد', fr: 'Nouveau étudiant' },
 };
+
