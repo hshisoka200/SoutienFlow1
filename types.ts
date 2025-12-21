@@ -31,6 +31,7 @@ export interface Student {
   total_price?: number;
   enrollments?: Enrollment[]; // Use structured data
   class_id?: string | string[]; // Link to class(es)
+  created_at?: string;
 }
 
 export interface Enrollment {
@@ -71,6 +72,7 @@ export interface Class {
   max_capacity: number;
   current_students: number;
   active: boolean;
+  whatsapp?: string;
   created_at?: string;
 }
 

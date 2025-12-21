@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Plus, Search, Filter, Trash2, Edit2, Download, Printer,
   ChevronDown, UserPlus, Save, X, Loader2, AlertCircle, MessageCircle
@@ -37,6 +37,8 @@ const StudentTable: React.FC<StudentTableProps> = ({ profile }) => {
   const [filterLevel, setFilterLevel] = useState<string>('all');
   const [filterSubject, setFilterSubject] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [searchName, setSearchName] = useState<string>('');
+  const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
 
   // Form State
   const [showAddForm, setShowAddForm] = useState(false);
@@ -60,13 +62,27 @@ const StudentTable: React.FC<StudentTableProps> = ({ profile }) => {
     class_ids: []
   });
 
+  // Subject Keyword Mapping for flexible searching
+  const SUBJECT_MAP: Record<string, string[]> = {
+    'maths': ['math', 'رياضيات', 'mathématiques'],
+    'physics': ['physic', 'physique', 'pc', 'فيزياء', 'chimie', 'chimia'],
+    'svt': ['svt', 'science', 'علوم'],
+    'anglais': ['anglais', 'english', 'الإنجليزية'],
+    'français': ['français', 'french', 'الفرنسية'],
+    'arabe': ['arabe', 'arabic', 'العربية'],
+    'philo': ['philo', 'philosophy', 'فلسفة'],
+    'h-g': ['histoire', 'geographie', 'h-g', 'التاريخ', 'الجغرافيا', 'sociale']
+  };
+
   const levels: { category: string, items: MoroccanLevel[] }[] = [
     { category: 'primary', items: ['1AP', '2AP', '3AP', '4AP', '5AP', '6AP'] },
     { category: 'middle', items: ['1AC', '2AC', '3AC'] },
     { category: 'high', items: ['Tronc Commun', '1BAC', '2BAC'] }
   ];
 
-  const subjects = ['Maths', 'Physics', 'PC', 'SVT', 'Anglais', 'Français', 'Arabe', 'Philo', 'H-G'];
+  const subjects = useMemo(() => {
+    return Array.from(new Set(pricingRules.map(r => r.subject)));
+  }, [pricingRules]);
 
   // Helper function to find pricing rule
   const findPriceRule = (subject: string, level: MoroccanLevel) => {
@@ -125,11 +141,20 @@ const StudentTable: React.FC<StudentTableProps> = ({ profile }) => {
 
       let filteredData = data || [];
 
-      // Client-side filter for subjects (since stored as JSON array)
+      // Client-side filter for subjects (flexible matching)
       if (filterSubject !== 'all') {
+        const normalizedFilter = filterSubject.toLowerCase();
+        const keywords = SUBJECT_MAP[normalizedFilter] || [normalizedFilter];
+
         filteredData = filteredData.filter(student => {
-          const subjects = parseSubjects(student.subject);
-          return subjects.some(s => s === filterSubject);
+          const studentSubjects = parseSubjects(student.subject).map(s => s.toLowerCase());
+
+          return studentSubjects.some(s => {
+            // Check if student subject matches any keyword of the filter
+            // Example: Filter is 'Physics', keywords include 'pc'. 
+            // If student has 'Physique-Chimie', it contains 'physic' or 'pc'.
+            return keywords.some(k => s.includes(k) || k.includes(s));
+          });
         });
       }
 
@@ -140,6 +165,27 @@ const StudentTable: React.FC<StudentTableProps> = ({ profile }) => {
       setLoading(false);
     }
   }
+
+  const handleEdit = (student: Student) => {
+    // Populate form with student data
+    setNewStudent({
+      name: student.full_name || student.name,
+      level: student.level,
+      phone: student.phone,
+      subjects: [], // Will be handled by class selection if needed, but for now we just want the base info
+      enrollments: parseSubjects(student.subject as any).map((subj: any) => {
+        // If it's already an enrollment object (new format), use it
+        if (typeof subj === 'object' && subj.subject) return subj;
+        // Otherwise mock it (legacy format)
+        return { subject: subj, level: student.level, price: 0 };
+      }),
+      status: (student.payment_status || student.status || 'Pending') as any,
+      discount: student.discount || 0,
+      class_ids: Array.isArray(student.class_id) ? student.class_id : (student.class_id ? [student.class_id] : [])
+    });
+    setEditingStudentId(student.id);
+    setShowAddForm(true);
+  };
 
   async function handleAddStudent(e?: React.FormEvent) {
     // Prevent page reload
@@ -152,6 +198,18 @@ const StudentTable: React.FC<StudentTableProps> = ({ profile }) => {
 
     if (!profile || !profile.id) {
       alert('Profile not loaded. Please refresh the page and try again.');
+      return;
+    }
+
+    // Duplicate Check
+    const isDuplicate = students.some(s =>
+      s.full_name === newStudent.name &&
+      s.phone === newStudent.phone &&
+      s.id !== editingStudentId
+    );
+
+    if (isDuplicate) {
+      alert('هذا التلميذ مسجل مسبقاً');
       return;
     }
 
@@ -172,30 +230,47 @@ const StudentTable: React.FC<StudentTableProps> = ({ profile }) => {
         class_id: newStudent.class_ids // Send explicitly as array
       };
 
-      const { data, error } = await supabase
-        .from('students')
-        .insert([studentData])
-        .select()
-        .single();
+      let result;
+      if (editingStudentId) {
+        result = await supabase
+          .from('students')
+          .update(studentData)
+          .eq('id', editingStudentId)
+          .select()
+          .single();
+      } else {
+        result = await supabase
+          .from('students')
+          .insert([studentData])
+          .select()
+          .single();
+      }
+
+      const { data, error } = result;
 
       if (error) {
         console.error('Supabase error:', error);
         throw new Error(`Database error: ${error.message || 'Unknown error'}`);
       }
 
-      // Optimistically update local state - add new student to the list
+      // Optimistically update local state
       if (data) {
-        setStudents(prev => [data as Student, ...prev]);
+        if (editingStudentId) {
+          setStudents(prev => prev.map(s => s.id === editingStudentId ? (data as Student) : s));
+        } else {
+          setStudents(prev => [data as Student, ...prev]);
 
-        // Generate PDF receipt with enrollment details
-        generatePDF(
-          {
-            ...data,
-            enrollments: newStudent.enrollments,
-            discount: newStudent.discount
-          },
-          profile.center_name || 'مركز دعم تعليمي'
-        );
+          // Generate PDF receipt with enrollment details - Only for NEW students usually, 
+          // but we can leave it if user wants a receipt on edit too.
+          generatePDF(
+            {
+              ...data,
+              enrollments: newStudent.enrollments,
+              discount: newStudent.discount
+            },
+            profile.center_name || 'مركز دعم تعليمي'
+          );
+        }
       }
 
       // Refresh alerts silently
@@ -204,6 +279,7 @@ const StudentTable: React.FC<StudentTableProps> = ({ profile }) => {
 
       // Close modal and reset form
       setShowAddForm(false);
+      setEditingStudentId(null);
       setNewStudent({
         name: '',
         level: '1BAC',
@@ -367,13 +443,31 @@ const StudentTable: React.FC<StudentTableProps> = ({ profile }) => {
             <h3 className="text-xl font-bold tracking-tight">{t('students')}</h3>
             <p className="text-sm text-gray-500">Managing {students.length} records</p>
           </div>
-          <button
-            onClick={() => setShowAddForm(!showAddForm)}
-            className="flex items-center justify-center gap-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:shadow-lg hover:shadow-purple-500/20 transition-all"
-          >
-            <UserPlus className="w-4 h-4 stroke-[2.5px]" />
-            {showAddForm ? 'Cancel' : t('new_student')}
-          </button>
+          <div className="flex flex-col md:flex-row gap-3">
+            <div className="relative group">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 group-focus-within:text-purple-500 transition-colors" />
+              <input
+                type="text"
+                placeholder="البحث عن طريق الاسم..."
+                value={searchName}
+                onChange={(e) => setSearchName(e.target.value)}
+                className={`pl-11 pr-4 py-2.5 rounded-xl border text-sm w-full md:w-64 focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition-all ${theme === 'dark' ? 'bg-[#0a0a0b] border-gray-800 text-white placeholder-gray-600' : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400'}`}
+              />
+            </div>
+            <button
+              onClick={() => {
+                if (showAddForm) {
+                  setEditingStudentId(null);
+                  setNewStudent({ name: '', level: '1BAC', subjects: [], enrollments: [], phone: '', status: 'Pending', discount: 0, class_ids: [] });
+                }
+                setShowAddForm(!showAddForm);
+              }}
+              className="flex items-center justify-center gap-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:shadow-lg hover:shadow-purple-500/20 transition-all"
+            >
+              <UserPlus className="w-4 h-4 stroke-[2.5px]" />
+              {showAddForm ? 'Cancel' : t('new_student')}
+            </button>
+          </div>
         </div>
 
         {/* Add Student Form */}
@@ -539,7 +633,7 @@ const StudentTable: React.FC<StudentTableProps> = ({ profile }) => {
             </div>
 
             <button type="submit" className="md:col-span-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white py-3 rounded-xl hover:shadow-lg hover:shadow-purple-500/20 transition-all font-bold text-sm">
-              Save Student
+              {editingStudentId ? 'تحديث بيانات الطالب' : 'Save Student'}
             </button>
           </form>
         )}
@@ -624,80 +718,91 @@ const StudentTable: React.FC<StudentTableProps> = ({ profile }) => {
                     </div>
                   </td>
                 </tr>
-              ) : students.length > 0 ? (
-                students.map((student) => (
-                  <tr key={student.id} className="hover:bg-purple-500/5 transition-all group">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-800 dark:to-gray-900 flex items-center justify-center text-[11px] font-bold text-gray-500 group-hover:scale-110 transition-transform">
-                          {(student.full_name || student.name || 'S').split(' ').map(n => n[0]).join('')}
-                        </div>
-                        <span className="text-sm font-semibold">{student.full_name || student.name}</span>
-                        {/* Display Classes Subtitle */}
-                        {student.class_id && (
-                          <div className="text-[10px] text-gray-400 font-medium">
-                            {Array.isArray(student.class_id)
-                              ? student.class_id.map(id => classes.find(c => c.id === id)?.class_name).filter(Boolean).join(', ')
-                              : classes.find(c => c.id === student.class_id)?.class_name || ''
-                            }
+              ) : students.filter(s => (s.full_name || s.name || '').toLowerCase().includes(searchName.toLowerCase())).length > 0 ? (
+                students
+                  .filter(s => (s.full_name || s.name || '').toLowerCase().includes(searchName.toLowerCase()))
+                  .map((student) => (
+                    <tr key={student.id} className="hover:bg-purple-500/5 transition-all group">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-800 dark:to-gray-900 flex items-center justify-center text-[11px] font-bold text-gray-500 group-hover:scale-110 transition-transform">
+                            {(student.full_name || student.name || 'S').split(' ').map(n => n[0]).join('')}
                           </div>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="text-xs font-medium text-gray-500">{student.level}</span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-wrap gap-1">
-                        {parseSubjects(student.subject).map((subj, idx) => (
-                          <span key={idx} className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
-                            {t(subj)}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-gray-500 font-mono">{student.phone}</span>
-                        <a
-                          href={`https://wa.me/${student.phone?.replace(/\+/g, '')}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-green-500 p-1.5 rounded-lg hover:bg-green-500/10 transition-all"
+                          <span className="text-sm font-semibold">{student.full_name || student.name}</span>
+                          {/* Display Classes Subtitle */}
+                          {student.class_id && (
+                            <div className="text-[10px] text-gray-400 font-medium">
+                              {Array.isArray(student.class_id)
+                                ? student.class_id.map(id => classes.find(c => c.id === id)?.class_name).filter(Boolean).join(', ')
+                                : classes.find(c => c.id === student.class_id)?.class_name || ''
+                              }
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className="text-xs font-medium text-gray-500">{student.level}</span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex flex-wrap gap-1">
+                          {parseSubjects(student.subject).map((subj, idx) => (
+                            <span key={idx} className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
+                              {t(subj)}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-gray-500 font-mono">{student.phone}</span>
+                          <a
+                            href={`https://wa.me/${student.phone?.replace(/\+/g, '')}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-green-500 p-1.5 rounded-lg hover:bg-green-500/10 transition-all"
+                          >
+                            <MessageCircle className="w-4 h-4" />
+                          </a>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <button
+                          onClick={() => togglePaymentStatus(student.id, student.payment_status || student.status || 'Pending')}
+                          className={`inline-flex items-center px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-full border transition-all cursor-pointer hover:scale-105 active:scale-95 ${(student.payment_status || student.status || 'Pending') === 'Paid'
+                            ? 'bg-green-500/10 text-green-500 border-green-500/20 hover:bg-green-500/20'
+                            : 'bg-amber-500/10 text-amber-500 border-amber-500/20 hover:bg-amber-500/20'}`}
+                          title="Click to toggle status"
                         >
-                          <MessageCircle className="w-4 h-4" />
-                        </a>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <button
-                        onClick={() => togglePaymentStatus(student.id, student.payment_status || student.status || 'Pending')}
-                        className={`inline-flex items-center px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-full border transition-all cursor-pointer hover:scale-105 active:scale-95 ${(student.payment_status || student.status || 'Pending') === 'Paid'
-                          ? 'bg-green-500/10 text-green-500 border-green-500/20 hover:bg-green-500/20'
-                          : 'bg-amber-500/10 text-amber-500 border-amber-500/20 hover:bg-amber-500/20'}`}
-                        title="Click to toggle status"
-                      >
-                        {t((student.payment_status || student.status || 'Pending').toLowerCase())}
-                      </button>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <button
-                        onClick={() => generatePDF(student, profile?.center_name || 'مركزنا')}
-                        className="p-2 text-blue-400 hover:text-blue-300 transition-colors"
-                        title="Print Receipt"
-                      >
-                        <Printer size={18} />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(student.id)}
-                        className="text-gray-400 hover:text-red-500 transition-colors"
-                        title="Delete Student"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </td>
-                  </tr>
-                ))
+                          {t((student.payment_status || student.status || 'Pending').toLowerCase())}
+                        </button>
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => handleEdit(student)}
+                            className="p-2 text-indigo-400 hover:text-indigo-300 transition-colors"
+                            title="Edit Student"
+                          >
+                            <Edit2 size={18} />
+                          </button>
+                          <button
+                            onClick={() => generatePDF(student, profile?.center_name || 'مركزنا')}
+                            className="p-2 text-blue-400 hover:text-blue-300 transition-colors"
+                            title="Print Receipt"
+                          >
+                            <Printer size={18} />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(student.id)}
+                            className="text-gray-400 hover:text-red-500 transition-colors"
+                            title="Delete Student"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
               ) : (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center text-gray-500 italic">
